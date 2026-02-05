@@ -35,12 +35,13 @@ contract RebaseToken is IERC20 {
     uint256 private constant USDT_DECIMALS = 6;
     uint256 private constant TOKEN_DECIMALS = 18;
     uint256 private constant DECIMAL_MULTIPLIER = 10**(TOKEN_DECIMALS - USDT_DECIMALS); // 10^12
+    uint256 private constant MIN_WITHDRAWAL_AMOUNT = DECIMAL_MULTIPLIER; // 0.000001 rbUSDT (1 USDT base unit)
     
     // Access control
     address public owner;
     
     // Events
-    event Rebase(uint256 indexed epoch, uint256 totalSupply);
+    event Rebase(uint256 indexed timestamp, uint256 totalSupply);
     event CollateralDeposited(address indexed user, uint256 amount);
     event CollateralWithdrawn(address indexed user, uint256 amount);
     event OwnershipTransferred(address indexed previousOwner, address indexed newOwner);
@@ -147,12 +148,12 @@ contract RebaseToken is IERC20 {
      * @param tokenAmount The amount of rebase tokens to burn (in rbUSDT decimals, e.g., 1000 * 10^18 for 1000 rbUSDT)
      */
     function withdrawCollateral(uint256 tokenAmount) external {
-        require(tokenAmount > 0, "RebaseToken: amount must be greater than 0");
+        require(tokenAmount >= MIN_WITHDRAWAL_AMOUNT, "RebaseToken: amount below minimum (0.000001 rbUSDT)");
         require(balanceOf(msg.sender) >= tokenAmount, "RebaseToken: insufficient balance");
         
         // Convert rbUSDT amount to USDT amount (scale down by 10^12)
         uint256 usdtAmount = tokenAmount / DECIMAL_MULTIPLIER;
-        require(usdtAmount > 0, "RebaseToken: amount too small");
+        require(usdtAmount > 0, "RebaseToken: USDT amount too small");
         require(collateralDeposits[msg.sender] >= usdtAmount, "RebaseToken: insufficient collateral");
         
         // Burn rebase tokens
@@ -248,40 +249,35 @@ contract RebaseToken is IERC20 {
     
     /**
      * @dev Internal mint function
+     * Mints tokens at the current gonsPerFragment rate
      */
     function _mint(address account, uint256 amount) internal {
         require(account != address(0), "RebaseToken: mint to the zero address");
         
-        // Update total supply first
-        _totalSupply += amount;
-        
-        // Recalculate gonsPerFragment to maintain consistency
-        _gonsPerFragment = TOTAL_GONS / _totalSupply;
-        
-        // Calculate gons with new rate
+        // Calculate gons at current rate BEFORE updating supply
         uint256 gonAmount = amount * _gonsPerFragment;
+        
+        // Update state
         _balances[account] += gonAmount;
+        _totalSupply += amount;
         
         emit Transfer(address(0), account, amount);
     }
     
     /**
      * @dev Internal burn function
+     * Burns tokens at the current gonsPerFragment rate
      */
     function _burn(address account, uint256 amount) internal {
         require(account != address(0), "RebaseToken: burn from the zero address");
         
+        // Calculate gons at current rate
         uint256 gonAmount = amount * _gonsPerFragment;
         require(_balances[account] >= gonAmount, "RebaseToken: burn amount exceeds balance");
         
         unchecked {
             _balances[account] -= gonAmount;
             _totalSupply -= amount;
-        }
-        
-        // Recalculate gonsPerFragment to maintain consistency
-        if (_totalSupply > 0) {
-            _gonsPerFragment = TOTAL_GONS / _totalSupply;
         }
         
         emit Transfer(account, address(0), amount);
