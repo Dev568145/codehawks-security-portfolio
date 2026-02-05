@@ -31,6 +31,11 @@ contract RebaseToken is IERC20 {
     mapping(address => uint256) public collateralDeposits;
     uint256 public totalCollateral;
     
+    // Decimal conversion constants
+    uint256 private constant USDT_DECIMALS = 6;
+    uint256 private constant TOKEN_DECIMALS = 18;
+    uint256 private constant DECIMAL_MULTIPLIER = 10**(TOKEN_DECIMALS - USDT_DECIMALS); // 10^12
+    
     // Access control
     address public owner;
     
@@ -116,44 +121,51 @@ contract RebaseToken is IERC20 {
     
     /**
      * @dev Deposit USDT as collateral and mint rebase tokens
-     * @param amount The amount of USDT to deposit
+     * @param usdtAmount The amount of USDT to deposit (in USDT decimals, e.g., 1000 * 10^6 for 1000 USDT)
      */
-    function depositCollateral(uint256 amount) external {
-        require(amount > 0, "RebaseToken: amount must be greater than 0");
+    function depositCollateral(uint256 usdtAmount) external {
+        require(usdtAmount > 0, "RebaseToken: amount must be greater than 0");
         
         // Transfer USDT from user to this contract
-        require(usdt.transferFrom(msg.sender, address(this), amount), "RebaseToken: USDT transfer failed");
+        require(usdt.transferFrom(msg.sender, address(this), usdtAmount), "RebaseToken: USDT transfer failed");
+        
+        // Convert USDT amount to rbUSDT amount (scale up by 10^12)
+        uint256 tokenAmount = usdtAmount * DECIMAL_MULTIPLIER;
         
         // Update collateral tracking
-        collateralDeposits[msg.sender] += amount;
-        totalCollateral += amount;
+        collateralDeposits[msg.sender] += usdtAmount;
+        totalCollateral += usdtAmount;
         
-        // Mint rebase tokens (1:1 with USDT)
-        _mint(msg.sender, amount);
+        // Mint rebase tokens
+        _mint(msg.sender, tokenAmount);
         
-        emit CollateralDeposited(msg.sender, amount);
+        emit CollateralDeposited(msg.sender, usdtAmount);
     }
     
     /**
      * @dev Withdraw USDT collateral by burning rebase tokens
-     * @param amount The amount of rebase tokens to burn and USDT to withdraw
+     * @param tokenAmount The amount of rebase tokens to burn (in rbUSDT decimals, e.g., 1000 * 10^18 for 1000 rbUSDT)
      */
-    function withdrawCollateral(uint256 amount) external {
-        require(amount > 0, "RebaseToken: amount must be greater than 0");
-        require(balanceOf(msg.sender) >= amount, "RebaseToken: insufficient balance");
-        require(collateralDeposits[msg.sender] >= amount, "RebaseToken: insufficient collateral");
+    function withdrawCollateral(uint256 tokenAmount) external {
+        require(tokenAmount > 0, "RebaseToken: amount must be greater than 0");
+        require(balanceOf(msg.sender) >= tokenAmount, "RebaseToken: insufficient balance");
+        
+        // Convert rbUSDT amount to USDT amount (scale down by 10^12)
+        uint256 usdtAmount = tokenAmount / DECIMAL_MULTIPLIER;
+        require(usdtAmount > 0, "RebaseToken: amount too small");
+        require(collateralDeposits[msg.sender] >= usdtAmount, "RebaseToken: insufficient collateral");
         
         // Burn rebase tokens
-        _burn(msg.sender, amount);
+        _burn(msg.sender, tokenAmount);
         
         // Update collateral tracking
-        collateralDeposits[msg.sender] -= amount;
-        totalCollateral -= amount;
+        collateralDeposits[msg.sender] -= usdtAmount;
+        totalCollateral -= usdtAmount;
         
         // Transfer USDT back to user
-        require(usdt.transfer(msg.sender, amount), "RebaseToken: USDT transfer failed");
+        require(usdt.transfer(msg.sender, usdtAmount), "RebaseToken: USDT transfer failed");
         
-        emit CollateralWithdrawn(msg.sender, amount);
+        emit CollateralWithdrawn(msg.sender, usdtAmount);
     }
     
     /**
@@ -164,7 +176,7 @@ contract RebaseToken is IERC20 {
     function rebase(int256 supplyDelta) external onlyOwner returns (uint256) {
         require(supplyDelta != 0, "RebaseToken: supplyDelta must be non-zero");
         
-        uint256 epoch = block.timestamp;
+        uint256 timestamp = block.timestamp;
         
         if (supplyDelta < 0) {
             uint256 decreaseAmount = uint256(-supplyDelta);
@@ -177,7 +189,7 @@ contract RebaseToken is IERC20 {
         
         _gonsPerFragment = TOTAL_GONS / _totalSupply;
         
-        emit Rebase(epoch, _totalSupply);
+        emit Rebase(timestamp, _totalSupply);
         
         return _totalSupply;
     }
@@ -188,7 +200,9 @@ contract RebaseToken is IERC20 {
      */
     function getCollateralRatio() external view returns (uint256) {
         if (_totalSupply == 0) return 0;
-        return (totalCollateral * 10000) / _totalSupply;
+        // Convert totalCollateral to 18 decimals before calculating ratio
+        uint256 collateralIn18Decimals = totalCollateral * DECIMAL_MULTIPLIER;
+        return (collateralIn18Decimals * 10000) / _totalSupply;
     }
     
     /**
@@ -238,8 +252,14 @@ contract RebaseToken is IERC20 {
     function _mint(address account, uint256 amount) internal {
         require(account != address(0), "RebaseToken: mint to the zero address");
         
-        uint256 gonAmount = amount * _gonsPerFragment;
+        // Update total supply first
         _totalSupply += amount;
+        
+        // Recalculate gonsPerFragment to maintain consistency
+        _gonsPerFragment = TOTAL_GONS / _totalSupply;
+        
+        // Calculate gons with new rate
+        uint256 gonAmount = amount * _gonsPerFragment;
         _balances[account] += gonAmount;
         
         emit Transfer(address(0), account, amount);
@@ -257,6 +277,11 @@ contract RebaseToken is IERC20 {
         unchecked {
             _balances[account] -= gonAmount;
             _totalSupply -= amount;
+        }
+        
+        // Recalculate gonsPerFragment to maintain consistency
+        if (_totalSupply > 0) {
+            _gonsPerFragment = TOTAL_GONS / _totalSupply;
         }
         
         emit Transfer(account, address(0), amount);
