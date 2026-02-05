@@ -1,0 +1,50 @@
+# Dependencies
+node_modules/
+package-lock.json
+
+# Build outputs
+out/
+cache/
+artifacts/
+dist/
+build/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Env files
+.env
+.env.local
+
+# Logs
+*.log
+logs/
+
+# Foundry
+broadcast/
+cache_forge/
+lib/
+
+# Hardhat
+typechain/
+typechain-types/
+
+# Coverage
+coverage/
+coverage.json
+.coverage_artifacts/
+.coverage_cache/
+.coverage_contracts/
+
+# Temporary files
+tmp/
+temp/
+*.tmp
